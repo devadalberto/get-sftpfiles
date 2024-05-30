@@ -31,7 +31,6 @@ $modules | ForEach-Object {
 }
 
 #region get environment variables
-
 # check if the file exists, if not create it and break
 $envFilePath = "$($PSScriptRoot)\.env"
 if (-not (Test-Path $envFilePath)) {
@@ -40,28 +39,65 @@ if (-not (Test-Path $envFilePath)) {
     exit
 }
 
+#testing
+"Environment Variables: `n"
+"==========================="
+
 Get-Content $envFilePath | ForEach-Object {
     $name, $value = $PSItem.Split('=')
     Set-Content env:\$name $value
+    "Name:`t$name | Value:`t$value"
 }
 #endregion
+
+
+#region Setting up the logging
+$dateStampLog = Get-Date -Format FileDateUniversal
+$logName = $MyInvocation.MyCommand.Name.Replace('.ps1', '')
+$logPath = "$($PSScriptRoot)\logs"
+$logFile = "{0}\$logName.$dateStampLog.log" -f $logPath
+
+if (-not (Test-Path $logFile)) {
+    New-Item -ItemType File -Path $logFile -ErrorAction SilentlyContinue -Force
+    "Created Directory $logFile"
+}
+
+
+$paramSetPSFLoggingProvider = @{
+    Name         = 'logfile'
+    InstanceName = $logName
+    FilePath     = $logFile
+    FileType     = 'CMTrace'
+    Enabled      = $true
+    # Wait         = $true
+}
+
+Set-PSFLoggingProvider @paramSetPSFLoggingProvider
+Write-PSFMessage -Level Verbose -Message "Starting script"
+#endregion Setting up the logging
 
 $PathForDownloads = $env:PATH_4_DOWNLOAD
 if (-not $PathForDownloads) {
     $downloadFolderName = "ftpTempFolder"
     $localDirectory = "$env:TEMP\$downloadFolderName"
+    Write-PSFMessage -Level Warning -Message "Could not found a Path, saving files to: $localDirectory"
 }
 else {
     $localDirectory = "$($PathForDownloads)\$env:STORAGE_ACCT"
+    Write-PSFMessage -Level SomewhatVerbose -Message "Found Path: $localDirectory"
 }
 if (-not (Test-Path $localDirectory)) {
     New-Item -ItemType Directory -Path $localDirectory
+    Write-PSFMessage -Level Warning -Message "Created Directory`: $localDirectory"
 }
 
 # 
-$securePassword = ConvertTo-SecureString $sftpPassword -AsPlainText -Force
-$Credential = New-Object System.Management.Automation.PSCredential ($sftpUsername, $securePassword)
+$sftpServer = $env:SFTPSERVER
+$sftpPort = $env:SFTPPORT
+$sftpUsername = $env:SFTPUSERNAME
+$securePassword = ConvertTo-SecureString $env:SFTPPASSWORD -AsPlainText -Force
 
+$Credential = New-Object System.Management.Automation.PSCredential ($sftpUsername, $securePassword)
 # Create a new SFTP session
 $sftpSession = New-SFTPSession -ComputerName $sftpServer -Port $sftpPort -Credential $Credential
 
@@ -84,14 +120,16 @@ foreach ($line in $txt) {
 }
 
 #region Download Files
+$getParams = @{
+    SFTPSession = $sftpSession
+    Path        = ''
+    Destination = $localDirectory
+    Force       = $true
+    Verbose     = $true
+}
+
 $filesToDownload | ForEach-Object {
-    $getParams = @{
-        SFTPSession = $sftpSession
-        Path        = $PSItem
-        Destination = $localDirectory
-        Force       = $true
-        Verbose     = $true
-    }
+    $getParams['Path'] = $PSItem
     Get-SFTPItem @getParams
 }
 
@@ -99,3 +137,4 @@ $filesToDownload | ForEach-Object {
 
 # Close the SFTP session
 Remove-SFTPSession -SFTPSession $sftpSession
+Write-PSFMessage -Level Warning -Message "Closing Session:`t$sftpSession"
