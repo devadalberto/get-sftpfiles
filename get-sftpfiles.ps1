@@ -1,6 +1,6 @@
 #Requires -Version 5
 #Requires -Modules Posh-SSH, PSFramework
-
+[CmdletBinding()]
 Param(
     [Parameter(
         Mandatory = $true,
@@ -16,40 +16,11 @@ Param(
         ValueFromPipeline = $true,
         ValueFromPipelineByPropertyName = $true)]
     [ValidateNotNullOrEmpty()]
-    #IE: "d:\sftp\gazimages\products"
+    #IE: "d:\sftp\downloads\path"
     [string]$PathForDownloads
 )
-
-$modules = @("Posh-SSH", "PSFramework")
-
-$modules | ForEach-Object { 
-    $isInstalled = Get-Module -ListAvailable -Name $PSItem
-    if (-not $isInstalled) {
-        Install-Module -Name $PSItem -AllowClobber -AcceptLicense -SkipPublisherCheck 
-    }
-    Import-Module -Name $PSItem
-}
-
-#region get environment variables
-# check if the file exists, if not create it and break
-$envFilePath = "$($PSScriptRoot)\.env"
-if (-not (Test-Path $envFilePath)) {
-    New-Item -ItemType File -Path $envFilePath -Value $(Get-Content "$($envFilePath).sample")
-    "Update values on $envFilePath file and re-run the script"
-    exit
-}
-
-#testing
-"Environment Variables: `n"
-"==========================="
-
-Get-Content $envFilePath | ForEach-Object {
-    $name, $value = $PSItem.Split('=')
-    Set-Content env:\$name $value
-    "Name:`t$name | Value:`t$value"
-}
-#endregion
-
+# measuring execution time
+$stopWatch = [Diagnostics.Stopwatch]::StartNew()
 
 #region Setting up the logging
 $dateStampLog = Get-Date -Format FileDateUniversal
@@ -71,10 +42,70 @@ $paramSetPSFLoggingProvider = @{
     Enabled      = $true
     # Wait         = $true
 }
-
-Set-PSFLoggingProvider @paramSetPSFLoggingProvider
-Write-PSFMessage -Level Verbose -Message "Starting script"
 #endregion Setting up the logging
+
+
+
+$modules = @("Posh-SSH", "PSFramework")
+
+#region Modules
+# check if module is installed - install if not
+$modules | ForEach-Object { 
+    $isInstalled = Get-Module -ListAvailable -Name $PSItem
+    if (-not $isInstalled) {
+        try {
+            Install-Module -Name $PSItem -AllowClobber -AcceptLicense -SkipPublisherCheck
+            "Successfully Installed Module:`t$($PSItem)"
+        }
+        catch {
+            "Error while installing Module:`t$($PSItem)`nExiting Script"
+            Exit
+        }
+    }
+}
+
+# import PS modules
+Set-PSFLoggingProvider @paramSetPSFLoggingProvider
+Write-PSFMessage -Level SomewhatVerbose -Message "Initializing Log"
+$modules | ForEach-Object { 
+    try {
+        Import-Module -Name $PSItem
+        Write-PSFMessage -Level SomewhatVerbose -Message "Successfully Imported Module:`t$($PSItem)"
+    }
+    catch {
+        Write-PSFMessage -Level Error -Message "Error while installing Module:`t$($PSItem)`nExiting Script"
+        Exit
+    }
+}
+#endregion Modules
+
+
+#region get environment variables
+# check if the file exists, if not create it and break
+$envFilePath = "$($PSScriptRoot)\.env"
+if (-not (Test-Path $envFilePath)) {
+    New-Item -ItemType File -Path $envFilePath -Value $(Get-Content "$($envFilePath).sample")
+    "Update values on $envFilePath file and re-run the script"
+    Write-PSFMessage -Level Error -Message "Make sure to update .env file`nExiting Script"
+    Exit
+}
+
+#testing
+"Environment Variables: `n"
+"==========================="
+
+Get-Content $envFilePath | ForEach-Object {
+    $name, $value = $PSItem.Split('=')
+    try {
+        Set-Content env:\$name $value
+        Write-PSFMessage -Level SomewhatVerbose -Message "env:$name`tSuccessfully set."
+    }
+    catch {
+        Write-PSFMessage -Level Error -Message "Error while setting env:$name`nExiting Script"
+        Exit
+    }
+}
+#endregion
 
 $PathForDownloads = $env:PATH_4_DOWNLOAD
 if (-not $PathForDownloads) {
@@ -91,7 +122,7 @@ if (-not (Test-Path $localDirectory)) {
     Write-PSFMessage -Level Warning -Message "Created Directory`: $localDirectory"
 }
 
-# 
+#region SFTP session 
 $sftpServer = $env:SFTPSERVER
 $sftpPort = $env:SFTPPORT
 $sftpUsername = $env:SFTPUSERNAME
@@ -100,18 +131,17 @@ $securePassword = ConvertTo-SecureString $env:SFTPPASSWORD -AsPlainText -Force
 $Credential = New-Object System.Management.Automation.PSCredential ($sftpUsername, $securePassword)
 # Create a new SFTP session
 $sftpSession = New-SFTPSession -ComputerName $sftpServer -Port $sftpPort -Credential $Credential
+if (-not $sftpSession) {
+    Write-PSFMessage -Level Error -Message "SFTP session could not be created`n$($PSItem)"
+}
+Write-PSFMessage -Level SomewhatVerbose -Message "SFTP Session Established with:`t$sftpServer"
 
-# # List files in the remote directory
-# $remoteFiles = Get-SFTPChildItem -SFTPSession $sftpSession -Path "/"
+#endregion
 
-# $dateStamp = Get-Date -Format FileDateTimeUniversal
-# $remoteFiles | Export-Csv -NoClobber -Path "./gazimages.products.$dateStamp.csv"
-# # =========================================================================
 
-# Create a list of the files to download
+#region Download Files
 $filesToDownload = [System.Collections.Generic.List[object]]::new()
 
-# process the text file
 $txt = Get-Content $File
 foreach ($line in $txt) {
     if ($line -ne "" -and $line[0] -ne "#" -and $line.ToLower() -ne "name") {
@@ -119,7 +149,6 @@ foreach ($line in $txt) {
     }
 }
 
-#region Download Files
 $getParams = @{
     SFTPSession = $sftpSession
     Path        = ''
@@ -130,7 +159,13 @@ $getParams = @{
 
 $filesToDownload | ForEach-Object {
     $getParams['Path'] = $PSItem
-    Get-SFTPItem @getParams
+    try {
+        Get-SFTPItem @getParams
+        Write-PSFMessage -Level Important -Message "File:`t$($PSItem)`t downloaded successfully to $localDirectory"
+    }
+    catch {
+        Write-PSFMessage -Level Error -Message "Error while getting file.`n$($PSItem)"
+    }
 }
 
 #endregion Download Files
@@ -138,3 +173,9 @@ $filesToDownload | ForEach-Object {
 # Close the SFTP session
 Remove-SFTPSession -SFTPSession $sftpSession
 Write-PSFMessage -Level Warning -Message "Closing Session:`t$sftpSession"
+
+#region End Script
+$stopWatch.Stop()
+$elapsedTimeSeconds = ($stopWatch.ElapsedMilliseconds) / 1000
+Write-PSFMessage -Level SomewhatVerbose -Message "Script ran in $("{0:N2}" -f $elapsedTimeSeconds)s."
+#endregion End Script

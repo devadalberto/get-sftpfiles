@@ -17,7 +17,7 @@ Below command will run and download the the files to the OS TEMP folder under 'f
 .\get-sftpfiles.ps1 -File .\samplefile.txt
 ```
 
-Optionally, you can (and should) specify the download directory
+### When running this script on Production, make sure to specify the download directory
 
 ```powershell
 .\get-sftpfiles.ps1 -File .\samplefile.txt -PathForDownloads 'F:\ftptest'
@@ -25,7 +25,8 @@ Optionally, you can (and should) specify the download directory
 
 ## ToDo's
 
-- [ ] Add logging (will be done later today)
-- [ ] Should the password be passed as a parameter or environment variable (or keep it as is )
-- [ ] Input file extension (txt) works?
+- [ ] Is the log format fine? (needs to be open with cmtrace)
 - [ ] Directory location (path) for the downloaded files needs to be updated (currently set to C:\Users\USERNAME\AppData\Local\Temp\ftpTempFolder)
+- [x] ~~Add logging (will be done later today)~~
+- [x] ~~Should the password be passed as a parameter or environment variable (or keep it as is )~~
+- [x] ~~Input file extension (txt) works?~~
